@@ -1057,4 +1057,14 @@ mod tests {
         assert_eq!(planned_cost_rust(schema, query, variables), 127.0);
         assert_eq!(actual_cost(schema, query, variables, response), 125.0);
     }
+
+    #[test]
+    fn list_size_selectors() {
+        let schema = include_str!("./fixtures/list_size_selector_schema.graphql");
+        let query = include_str!("./fixtures/list_size_selector_query.graphql");
+        let variables = r#"{"costlyInput": {"somethingWithCost": 8}, "fieldCountVar": 5}"#;
+
+        assert_eq!(estimated_cost(schema, query, variables), 51.0);
+        assert_eq!(planned_cost_rust(schema, query, variables), 51.0);
+    }
 }

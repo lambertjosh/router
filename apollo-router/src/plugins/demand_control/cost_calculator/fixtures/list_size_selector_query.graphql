@@ -1,0 +1,12 @@
+fragment Items on SizedField {
+  items {
+    id
+  }
+}
+
+query TestQuery($costlyInput: InputTypeWithCost) {
+  listSizePath(paging: { somethingWithCost: 5 })
+  listSizeSubselection(paging: $costlyInput) {
+    ...Items
+  }
+}

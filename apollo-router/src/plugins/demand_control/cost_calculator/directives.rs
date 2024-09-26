@@ -15,6 +15,8 @@ use apollo_compiler::Name;
 use apollo_compiler::Schema;
 use apollo_federation::link::spec::APOLLO_SPEC_DOMAIN;
 use apollo_federation::link::Link;
+use apollo_federation::sources::connect::ApplyTo;
+use apollo_federation::sources::connect::JSONSelection;
 use tower::BoxError;
 
 use crate::json_ext::Object;
@@ -147,11 +149,65 @@ impl<'schema> ListSizeDirective<'schema> {
     }
 }
 
+fn to_json_with_variables(
+    val: &apollo_compiler::ast::Value,
+    variables: &Object,
+) -> serde_json_bytes::Value {
+    use apollo_compiler::ast::Value as AstValue;
+    use serde_json_bytes::Value as JsonValue;
+
+    match val {
+        AstValue::Null => JsonValue::Null,
+        AstValue::Enum(_name) => todo!(),
+        AstValue::Variable(name) => variables
+            .get(name.as_str())
+            .cloned()
+            .unwrap_or(JsonValue::Null),
+        AstValue::String(s) => JsonValue::String(s.clone().into()),
+        AstValue::Float(float_value) => {
+            if let Ok(_f) = float_value.try_to_f64() {
+                todo!() // JsonValue::Number(f.into())
+            } else {
+                JsonValue::Null
+            }
+        }
+        AstValue::Int(int_value) => {
+            if let Ok(i) = int_value.try_to_i32() {
+                JsonValue::Number(i.into())
+            } else {
+                JsonValue::Null
+            }
+        }
+        AstValue::Boolean(b) => JsonValue::Bool(*b),
+        AstValue::List(vec) => JsonValue::Array(
+            vec.iter()
+                .map(|v| to_json_with_variables(v, variables))
+                .collect(),
+        ),
+        AstValue::Object(vec) => JsonValue::Object(
+            vec.iter()
+                .map(|(n, v)| (n.as_str().into(), to_json_with_variables(v, variables)))
+                .collect(),
+        ),
+    }
+}
+
+fn leaves(json: &serde_json_bytes::Value) -> Vec<serde_json_bytes::Value> {
+    match json {
+        serde_json_bytes::Value::Null => vec![json.clone()],
+        serde_json_bytes::Value::Bool(_) => vec![json.clone()],
+        serde_json_bytes::Value::Number(_) => vec![json.clone()],
+        serde_json_bytes::Value::String(_) => vec![json.clone()],
+        serde_json_bytes::Value::Array(vec) => vec.iter().flat_map(leaves).collect(),
+        serde_json_bytes::Value::Object(map) => map.values().flat_map(leaves).collect(),
+    }
+}
+
 /// The `@listSize` directive from a field definition, which can be converted to
 /// `ListSizeDirective` with a concrete field from a request.
 pub(in crate::plugins::demand_control) struct DefinitionListSizeDirective {
     assumed_size: Option<i32>,
-    slicing_argument_names: Option<HashSet<String>>,
+    slicing_argument_selections: Option<Vec<JSONSelection>>,
     sized_fields: Option<HashSet<String>>,
     require_one_slicing_argument: bool,
 }
@@ -169,14 +225,14 @@ impl DefinitionListSizeDirective {
             let assumed_size = directive
                 .specified_argument_by_name(&LIST_SIZE_DIRECTIVE_ASSUMED_SIZE_ARGUMENT_NAME)
                 .and_then(|arg| arg.to_i32());
-            let slicing_argument_names = directive
+            let slicing_argument_selections = directive
                 .specified_argument_by_name(&LIST_SIZE_DIRECTIVE_SLICING_ARGUMENTS_ARGUMENT_NAME)
                 .and_then(|arg| arg.as_list())
                 .map(|arg_list| {
                     arg_list
                         .iter()
                         .flat_map(|arg| arg.as_str())
-                        .map(String::from)
+                        .map(|s| JSONSelection::parse(s).expect("can parse selection").1)
                         .collect()
                 });
             let sized_fields = directive
@@ -198,7 +254,7 @@ impl DefinitionListSizeDirective {
 
             Ok(Some(Self {
                 assumed_size,
-                slicing_argument_names,
+                slicing_argument_selections,
                 sized_fields,
                 require_one_slicing_argument,
             }))
@@ -212,31 +268,28 @@ impl DefinitionListSizeDirective {
         field: &Field,
         variables: &Object,
     ) -> Result<ListSizeDirective, DemandControlError> {
-        let mut slicing_arguments: HashMap<&str, i32> = HashMap::new();
-        if let Some(slicing_argument_names) = self.slicing_argument_names.as_ref() {
-            // First, collect the default values for each argument
-            for argument in &field.definition.arguments {
-                if slicing_argument_names.contains(argument.name.as_str()) {
-                    if let Some(numeric_value) =
-                        argument.default_value.as_ref().and_then(|v| v.to_i32())
-                    {
-                        slicing_arguments.insert(&argument.name, numeric_value);
-                    }
-                }
-            }
-            // Then, overwrite any default values with the actual values passed in the query
-            for argument in &field.arguments {
-                if slicing_argument_names.contains(argument.name.as_str()) {
-                    if let Some(numeric_value) = argument.value.to_i32() {
-                        slicing_arguments.insert(&argument.name, numeric_value);
-                    } else if let Some(numeric_value) = argument
-                        .value
-                        .as_variable()
-                        .and_then(|variable_name| variables.get(variable_name.as_str()))
-                        .and_then(|variable| variable.as_i32())
-                    {
-                        slicing_arguments.insert(&argument.name, numeric_value);
-                    }
+        let mut slicing_arguments: Vec<i32> = Vec::new();
+
+        if let Some(slicing_argument_selections) = self.slicing_argument_selections.as_ref() {
+            let combined_arguments = apollo_compiler::ast::Value::Object(
+                field
+                    .arguments
+                    .iter()
+                    .map(|arg| (arg.name.clone(), arg.value.clone()))
+                    .collect(),
+            );
+            let combined_arguments = to_json_with_variables(&combined_arguments, variables);
+
+            for selection in slicing_argument_selections {
+                let argument_selection = selection.apply_with_vars(
+                    &combined_arguments,
+                    &variables
+                        .iter()
+                        .map(|(s, v)| (s.as_str().to_string(), v.clone()))
+                        .collect(),
+                );
+                if let Some(json) = &argument_selection.0 {
+                    slicing_arguments.extend(leaves(json).iter().flat_map(|leaf| leaf.as_i32()));
                 }
             }
 
@@ -249,7 +302,7 @@ impl DefinitionListSizeDirective {
         }
 
         let expected_size = slicing_arguments
-            .values()
+            .iter()
             .max()
             .cloned()
             .or(self.assumed_size);
@@ -309,5 +362,26 @@ impl SkipDirective {
             .map(|cond| Self { is_skipped: cond });
 
         Ok(directive)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use apollo_federation::sources::connect::JSONSelection;
+    use test_log::test;
+
+    #[test]
+    fn list_size_json_handling() {
+        let selector = JSONSelection::parse("first").expect("parses").1;
+        let value = serde_json_bytes::json!({
+            "first": 5
+        });
+        let selected = selector.apply_to(&value).0.unwrap_or_default();
+        let leaves = leaves(&selected);
+        let integer_leaves: Vec<i32> = leaves.iter().flat_map(|l| l.as_i32()).collect();
+
+        assert_eq!(integer_leaves, vec![5]);
+        assert_eq!(1, 2)
     }
 }

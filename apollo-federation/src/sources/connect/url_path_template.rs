@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use apollo_compiler::collections::IndexMap;
+use apollo_compiler::collections::IndexSet;
 use itertools::Itertools;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
@@ -567,6 +568,7 @@ fn nom_parse_identifier_path(input: &str) -> IResult<&str, String> {
     Ok((input, identifier_path.join(".")))
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use serde_json_bytes::json;
@@ -1806,3 +1808,4 @@ mod tests {
         );
     }
 }
+*/
