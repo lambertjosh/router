@@ -194,7 +194,7 @@ impl SubgraphOperation {
 }
 
 /// Failed to call `SubgraphOperation::init_parsed` after creating a query plan
-#[derive(Debug, displaydoc::Display, thiserror::Error)]
+#[derive(Debug, PartialEq, displaydoc::Display, thiserror::Error)]
 pub(crate) struct SubgraphOperationNotInitialized;
 
 impl SubgraphOperationNotInitialized {

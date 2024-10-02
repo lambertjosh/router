@@ -142,7 +142,7 @@ type Query
   listSize(paging: InputTypeWithCost): [String!]
     @join__field(graph: SUBGRAPHWITHLISTSIZE)
     @listSize(
-      slicingArguments: ["paging { somethingWithCost }"]
+      slicingArguments: ["paging { nonexistent }"]
       requireOneSlicingArgument: false
     )
 }

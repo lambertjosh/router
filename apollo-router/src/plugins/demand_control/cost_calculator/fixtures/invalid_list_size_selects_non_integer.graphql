@@ -92,6 +92,7 @@ input InputTypeWithCost
   @join__type(graph: SUBGRAPHWITHCOST)
   @join__type(graph: SUBGRAPHWITHLISTSIZE) {
   somethingWithCost: Int @cost(weight: 20)
+  xyz: String
 }
 
 input join__ContextArgument {
@@ -142,7 +143,7 @@ type Query
   listSize(paging: InputTypeWithCost): [String!]
     @join__field(graph: SUBGRAPHWITHLISTSIZE)
     @listSize(
-      slicingArguments: ["paging { somethingWithCost }"]
+      slicingArguments: ["paging { xyz }"]
       requireOneSlicingArgument: false
     )
 }

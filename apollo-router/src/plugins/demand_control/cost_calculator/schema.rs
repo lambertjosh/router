@@ -65,6 +65,7 @@ impl DemandControlledSchema {
                         if let Some(list_size_directive) = ListSizeDirective::from_field_definition(
                             &directive_name_map,
                             field_definition,
+                            &schema,
                         )? {
                             field_list_size_directives
                                 .insert(field_name.clone(), list_size_directive);
@@ -100,6 +101,7 @@ impl DemandControlledSchema {
                         if let Some(list_size_directive) = ListSizeDirective::from_field_definition(
                             &directive_name_map,
                             field_definition,
+                            &schema,
                         )? {
                             field_list_size_directives
                                 .insert(field_name.clone(), list_size_directive);
@@ -176,5 +178,66 @@ impl Deref for DemandControlledSchema {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::spec::Schema;
+
+    #[test]
+    fn list_size_valid_subselection() {
+        let schema_str = include_str!("fixtures/list_size_selector_schema.graphql");
+        let schema = Schema::parse(&schema_str, &Default::default()).expect("schema parses");
+        let arced_schema = Arc::new(schema.supergraph_schema().clone());
+        let processed = DemandControlledSchema::new(arced_schema);
+
+        assert!(processed.is_ok())
+    }
+
+    #[test]
+    fn list_size_selection_path_validation() {
+        let schema_str = include_str!("fixtures/invalid_list_size_selector_path.graphql");
+        let schema = Schema::parse(&schema_str, &Default::default()).expect("schema parses");
+        let arced_schema = Arc::new(schema.supergraph_schema().clone());
+        let processed = DemandControlledSchema::new(arced_schema);
+
+        assert_eq!(
+            processed.err(),
+            Some(DemandControlError::InvalidListSizeApplication(
+                "Property .doesntExist not found in object".to_string(),
+            ))
+        )
+    }
+
+    #[test]
+    fn list_size_selection_subselection_validation() {
+        let schema_str = include_str!("fixtures/invalid_list_size_selector_subselection.graphql");
+        let schema = Schema::parse(&schema_str, &Default::default()).expect("schema parses");
+        let arced_schema = Arc::new(schema.supergraph_schema().clone());
+        let processed = DemandControlledSchema::new(arced_schema);
+
+        assert_eq!(
+            processed.err(),
+            Some(DemandControlError::InvalidListSizeApplication(
+                "Property .nonexistent not found in object".to_string(),
+            ))
+        )
+    }
+
+    #[test]
+    fn list_size_selection_non_integer_validation() {
+        let schema_str = include_str!("fixtures/invalid_list_size_selects_non_integer.graphql");
+        let schema = Schema::parse(&schema_str, &Default::default()).expect("schema parses");
+        let arced_schema = Arc::new(schema.supergraph_schema().clone());
+        let processed = DemandControlledSchema::new(arced_schema);
+
+        assert_eq!(
+            processed.err(),
+            Some(DemandControlError::InvalidListSizeApplication(
+                "Selected non-Int".to_string(),
+            ))
+        )
     }
 }

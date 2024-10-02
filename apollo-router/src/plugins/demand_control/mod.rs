@@ -100,7 +100,7 @@ pub(crate) struct DemandControlConfig {
     strategy: StrategyConfig,
 }
 
-#[derive(Debug, Display, Error)]
+#[derive(Debug, Display, Error, PartialEq)]
 pub(crate) enum DemandControlError {
     /// query estimated cost {estimated_cost} exceeded configured maximum {max_cost}
     EstimatedCostTooExpensive {
@@ -123,6 +123,8 @@ pub(crate) enum DemandControlError {
     SubgraphOperationNotInitialized(crate::query_planner::fetch::SubgraphOperationNotInitialized),
     /// {0}
     ContextSerializationError(String),
+    /// Invalid @listSize application: {0}
+    InvalidListSizeApplication(String),
 }
 
 impl IntoGraphQLErrors for DemandControlError {
@@ -163,6 +165,12 @@ impl IntoGraphQLErrors for DemandControlError {
                 .extension_code(self.code())
                 .message(self.to_string())
                 .build()]),
+            DemandControlError::InvalidListSizeApplication(_) => {
+                Ok(vec![graphql::Error::builder()
+                    .extension_code(self.code())
+                    .message(self.to_string())
+                    .build()])
+            }
         }
     }
 }
@@ -175,6 +183,9 @@ impl DemandControlError {
             DemandControlError::QueryParseFailure(_) => "COST_QUERY_PARSE_FAILURE",
             DemandControlError::SubgraphOperationNotInitialized(e) => e.code(),
             DemandControlError::ContextSerializationError(_) => "COST_CONTEXT_SERIALIZATION_ERROR",
+            DemandControlError::InvalidListSizeApplication(_) => {
+                "COST_INVALID_LIST_SIZE_APPLICATION"
+            }
         }
     }
 }
