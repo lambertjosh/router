@@ -1062,9 +1062,9 @@ mod tests {
     fn list_size_selectors() {
         let schema = include_str!("./fixtures/list_size_selector_schema.graphql");
         let query = include_str!("./fixtures/list_size_selector_query.graphql");
-        let variables = r#"{"costlyInput": {"somethingWithCost": 8}, "fieldCountVar": 5}"#;
+        let variables = r#"{"pagingParams": {"somethingWithCost": 8}, "fieldCountVar": 5}"#;
 
-        assert_eq!(estimated_cost(schema, query, variables), 51.0);
-        assert_eq!(planned_cost_rust(schema, query, variables), 51.0);
+        assert_eq!(estimated_cost(schema, query, variables), 29.0);
+        assert_eq!(planned_cost_rust(schema, query, variables), 29.0);
     }
 }

@@ -1,9 +1,5 @@
-fragment Items on SizedField {
-  items {
+query TestQuery($pagingParams: InputTypeWithCost) {
+  listSize(paging: $pagingParams) {
     id
   }
-}
-
-query TestQuery($costlyInput: InputTypeWithCost) {
-  listSize(paging: { somethingWithCost: 5 })
 }

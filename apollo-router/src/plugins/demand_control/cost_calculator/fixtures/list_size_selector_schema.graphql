@@ -139,7 +139,7 @@ type Query
     @join__field(graph: SUBGRAPHWITHCOST)
   scalarWithCost: ExpensiveInt @join__field(graph: SUBGRAPHWITHCOST)
   objectWithCost: ExpensiveObject @join__field(graph: SUBGRAPHWITHCOST)
-  listSize(paging: InputTypeWithCost): [String!]
+  listSize(paging: InputTypeWithCost): [A!]
     @join__field(graph: SUBGRAPHWITHLISTSIZE)
     @listSize(
       slicingArguments: ["paging { somethingWithCost }"]

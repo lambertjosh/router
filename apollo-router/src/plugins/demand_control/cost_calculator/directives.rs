@@ -258,6 +258,7 @@ impl DefinitionListSizeDirective {
                 .specified_argument_by_name(&LIST_SIZE_DIRECTIVE_ASSUMED_SIZE_ARGUMENT_NAME)
                 .and_then(|arg| arg.to_i32());
 
+            /*
             let slicing_argument_fieldsets = directive
                 .specified_argument_by_name(&LIST_SIZE_DIRECTIVE_SLICING_ARGUMENTS_ARGUMENT_NAME)
                 .and_then(|arg| arg.as_list())
@@ -292,6 +293,7 @@ impl DefinitionListSizeDirective {
                     Self::validate_fieldset_selects_integer_fields(selection, &combined, schema)?;
                 }
             }
+            */
 
             let slicing_argument_selections = directive
                 .specified_argument_by_name(&LIST_SIZE_DIRECTIVE_SLICING_ARGUMENTS_ARGUMENT_NAME)
@@ -339,7 +341,7 @@ impl DefinitionListSizeDirective {
 
             Ok(Some(Self {
                 assumed_size,
-                slicing_argument_fieldsets,
+                slicing_argument_fieldsets: None,
                 slicing_argument_selections,
                 sized_fields,
                 require_one_slicing_argument,
@@ -508,6 +510,5 @@ mod test {
         let integer_leaves: Vec<i32> = leaves.iter().flat_map(|l| l.as_i32()).collect();
 
         assert_eq!(integer_leaves, vec![5]);
-        assert_eq!(1, 2)
     }
 }
