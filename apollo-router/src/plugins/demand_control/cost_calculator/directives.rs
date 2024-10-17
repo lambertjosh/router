@@ -19,7 +19,6 @@ use apollo_compiler::Node;
 use apollo_compiler::Schema;
 use apollo_federation::link::spec::APOLLO_SPEC_DOMAIN;
 use apollo_federation::link::Link;
-use apollo_federation::sources::connect::ApplyTo;
 use apollo_federation::sources::connect::JSONSelection;
 use itertools::Itertools;
 use tower::BoxError;
@@ -360,7 +359,7 @@ impl DefinitionListSizeDirective {
         let (selected, errors) = selection.apply_to(&json_def);
         if errors.len() > 0 {
             return Err(DemandControlError::InvalidListSizeApplication(
-                errors.iter().flat_map(|e| e.message()).join(", "),
+                errors.iter().map(|e| e.message()).join(", "),
             ));
         }
 

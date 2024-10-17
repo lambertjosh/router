@@ -1,0 +1,19 @@
+directive @listSize(
+  assumedSize: Int
+  slicingArguments: [String!]
+  sizedFields: [String!]
+  requireOneSlicingArgument: Boolean = true
+) on FIELD_DEFINITION
+
+input PagingParams {
+  limit: Int
+  opaqueCursor: String
+}
+
+type Query {
+  getStrings(paging: PagingParams): [String]
+    @listSize(
+      slicingArguments: ["doesntExist", "paging.opaqueCursor", "}bad selection"]
+      requireOneSlicingArgument: false
+    )
+}
