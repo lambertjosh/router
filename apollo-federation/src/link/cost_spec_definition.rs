@@ -25,6 +25,7 @@ use crate::schema::position::ScalarTypeDefinitionPosition;
 use crate::schema::FederationSchema;
 use crate::sources::connect::validation::Code;
 use crate::sources::connect::validation::Message;
+use crate::sources::connect::ApplyToError;
 use crate::sources::connect::JSONSelection;
 
 pub(crate) const COST_DIRECTIVE_NAME_IN_SPEC: Name = name!("cost");
@@ -32,6 +33,7 @@ pub(crate) const COST_DIRECTIVE_NAME_DEFAULT: Name = name!("federation__cost");
 
 pub(crate) const LIST_SIZE_DIRECTIVE_NAME_IN_SPEC: Name = name!("listSize");
 pub(crate) const LIST_SIZE_DIRECTIVE_NAME_DEFAULT: Name = name!("federation__listSize");
+pub(crate) const LIST_SIZE_SLICING_ARGUMENTS_NAME: Name = name!("slicingArguments");
 
 #[derive(Clone)]
 pub(crate) struct CostSpecDefinition {
@@ -183,9 +185,9 @@ impl CostSpecDefinition {
                     for field_name in ty.fields.keys() {
                         if let Ok(definition) = schema.type_field(type_name.as_str(), field_name) {
                             if let Some(directive) = definition.directives.get("listSize") {
-                                let coordinate = format!("{}.{}", ty.name, definition.name);
+                                let coordinate = &format!("{}.{}", ty.name, definition.name);
                                 validation_errors.extend(Self::validate_list_size_directive(
-                                    coordinate, definition, &directive, schema,
+                                    coordinate, definition, directive, schema,
                                 ));
                             }
                         }
@@ -195,9 +197,9 @@ impl CostSpecDefinition {
                     for field_name in ty.fields.keys() {
                         if let Ok(definition) = schema.type_field(type_name.as_str(), field_name) {
                             if let Some(directive) = definition.directives.get("listSize") {
-                                let coordinate = format!("{}.{}", ty.name, definition.name);
+                                let coordinate = &format!("{}.{}", ty.name, definition.name);
                                 validation_errors.extend(Self::validate_list_size_directive(
-                                    coordinate, definition, &directive, schema,
+                                    coordinate, definition, directive, schema,
                                 ));
                             }
                         }
@@ -212,13 +214,57 @@ impl CostSpecDefinition {
     }
 
     fn validate_list_size_directive(
-        coordinate: String,
-        definition: &Component<FieldDefinition>,
+        coordinate: &String,
+        definition: &FieldDefinition,
         directive: &Node<Directive>,
         schema: &apollo_compiler::Schema,
     ) -> Vec<Message> {
         let mut validation_failures = Vec::new();
+        let error_location = ValidationErrorLocation::new(coordinate, directive, schema);
 
+        if let Ok(Some(slicing_arguments)) = directive
+            .argument_by_name(&LIST_SIZE_SLICING_ARGUMENTS_NAME, schema)
+            .map(|arg| arg.as_list())
+        {
+            let as_json = Self::json_representation_of_arguments(definition, schema);
+            for slicing_argument in slicing_arguments.iter().filter_map(|arg| arg.as_str()) {
+                match JSONSelection::parse(slicing_argument) {
+                    Ok((_, selection)) => {
+                        let (selected, apply_errors) = selection.apply_to(&as_json);
+                        validation_failures.extend(
+                            apply_errors
+                                .iter()
+                                .map(|e| error_location.json_selection_application_error(e)),
+                        );
+
+                        if let Some(s) = selected.as_ref() {
+                            for lt in Self::leaves(s) {
+                                if lt.as_str() != Some("Int") {
+                                    validation_failures.push(
+                                        error_location.expected_integer_selection_error(
+                                            slicing_argument,
+                                            lt.as_str().unwrap_or_default(),
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        validation_failures.push(error_location.json_selection_parse_error(err))
+                    }
+                }
+            }
+        }
+
+        validation_failures
+    }
+
+    /// Combines the arguments of `definition` into a single JSON object with each argument as an entry.
+    fn json_representation_of_arguments(
+        definition: &FieldDefinition,
+        schema: &apollo_compiler::Schema,
+    ) -> serde_json_bytes::Value {
         let combined = ExtendedType::InputObject(Node::new(InputObjectType {
             description: None,
             name: name!("combined"),
@@ -229,92 +275,38 @@ impl CostSpecDefinition {
                 .map(|arg| (arg.name.clone(), Component::from((**arg).clone())))
                 .collect(),
         }));
-        let as_json = Self::to_json_schema_tree(Some(&combined), schema);
-
-        if let Ok(Some(slicing_arguments)) = directive
-            .argument_by_name("slicingArguments", schema)
-            .map(|arg| arg.as_list())
-        {
-            for slicing_argument in slicing_arguments.iter().filter_map(|arg| arg.as_str()) {
-                match JSONSelection::parse(slicing_argument) {
-                    Ok((_, selection)) => {
-                        let (selected, apply_errors) = selection.apply_to(&as_json);
-                        // TODO: Different error code?
-                        validation_failures.extend(apply_errors.iter().map(|e| {
-                            Message {
-                                code: Code::SelectedFieldNotFound,
-                                message: format!("@{}(slicingArguments:) on {} selects invalid slicing arguments. {}", directive.name, coordinate, e.message()),
-                                locations: directive
-                                    .line_column_range(&schema.sources)
-                                    .into_iter()
-                                    .collect(),
-                            }
-                        }));
-
-                        if let Some(s) = selected.as_ref() {
-                            for lt in Self::leaves(s) {
-                                if lt.as_str() != Some("Int") {
-                                    // TODO: Different code?
-                                    validation_failures.push(Message {
-                                        code: Code::InvalidJsonSelection,
-                                        message: format!(
-                                            "@{}(slicingArguments:) on {} selects invalid slicing arguments. Selection {} selects {}, but Int is required",
-                                            directive.name, coordinate, slicing_argument, lt
-                                        ),
-                                        locations: directive
-                                            .line_column_range(&schema.sources)
-                                            .into_iter()
-                                            .collect(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    Err(err) => validation_failures.push(Message {
-                        code: Code::InvalidJsonSelection,
-                        message: format!(
-                            "@{}(slicingArguments:) on {} is not a valid JSONSelection. {}",
-                            directive.name,
-                            coordinate,
-                            err.to_string()
-                        ),
-                        locations: directive
-                            .line_column_range(&schema.sources)
-                            .into_iter()
-                            .collect(),
-                    }),
-                }
-            }
-        }
-
-        validation_failures
+        Self::to_json_schema_tree(Some(&combined), schema)
     }
 
+    /// Converts a schema type to a JSON object with leaves that are the names of the type of each terminal scalar.
+    ///
+    /// **Disclaimer:** This is only implemented for InputObject because we're evaluating selections on inputs. Do not
+    /// this as-is for output types, it will result in unexpected null values.
     fn to_json_schema_tree(
         ty: Option<&ExtendedType>,
         schema: &apollo_compiler::Schema,
     ) -> serde_json_bytes::Value {
         use serde_json_bytes::Value as JsonValue;
 
-        if let Some(ty) = ty {
-            match ty {
-                ExtendedType::Scalar(node) => JsonValue::String(node.name.as_str().into()),
-                ExtendedType::Object(node) => todo!(),
-                ExtendedType::Interface(node) => todo!(),
-                ExtendedType::Union(node) => todo!(),
-                ExtendedType::Enum(node) => todo!(),
-                ExtendedType::InputObject(node) => {
-                    let mut m: Vec<(serde_json_bytes::ByteString, JsonValue)> = Vec::new();
-                    for (n, v) in node.fields.iter() {
-                        let next_ty = schema.types.get(v.ty.inner_named_type());
-                        let converted = Self::to_json_schema_tree(next_ty, schema);
-                        m.push((n.as_str().into(), converted))
-                    }
-                    JsonValue::Object(m.iter().cloned().collect())
+        match ty {
+            Some(ExtendedType::Scalar(node)) => JsonValue::String(node.name.as_str().into()),
+            Some(ExtendedType::Enum(node)) => JsonValue::String(node.name.as_str().into()),
+            Some(ExtendedType::InputObject(node)) => {
+                let mut m: Vec<(serde_json_bytes::ByteString, JsonValue)> = Vec::new();
+                for (n, v) in node.fields.iter() {
+                    let next_ty = schema.types.get(v.ty.inner_named_type());
+                    let converted = Self::to_json_schema_tree(next_ty, schema);
+                    m.push((n.as_str().into(), converted))
                 }
+                JsonValue::Object(m.iter().cloned().collect())
             }
-        } else {
-            JsonValue::Null
+            None
+            | Some(ExtendedType::Object(_))
+            | Some(ExtendedType::Interface(_))
+            | Some(ExtendedType::Union(_)) => {
+                // We currently only apply this to input objects, so these three types aren't legal
+                JsonValue::Null
+            }
         }
     }
 
@@ -351,6 +343,76 @@ lazy_static! {
     };
 }
 
+struct ValidationErrorLocation<'a> {
+    coordinate: &'a String,
+    directive: &'a Node<Directive>,
+    schema: &'a apollo_compiler::Schema,
+}
+
+impl<'a> ValidationErrorLocation<'a> {
+    fn new(
+        coordinate: &'a String,
+        directive: &'a Node<Directive>,
+        schema: &'a apollo_compiler::Schema,
+    ) -> Self {
+        Self {
+            coordinate,
+            directive,
+            schema,
+        }
+    }
+
+    fn json_selection_application_error(&self, error: &ApplyToError) -> Message {
+        Message {
+            code: Code::SelectedFieldNotFound,
+            message: format!(
+                "@{}({}:) on {} selects invalid slicing arguments. {}",
+                self.directive.name,
+                LIST_SIZE_SLICING_ARGUMENTS_NAME,
+                self.coordinate,
+                error.message()
+            ),
+            locations: self
+                .directive
+                .line_column_range(&self.schema.sources)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn json_selection_parse_error(&self, error: nom::Err<nom::error::Error<&str>>) -> Message {
+        Message {
+            code: Code::InvalidJsonSelection,
+            message: format!(
+                "@{}(slicingArguments:) on {} is not a valid JSONSelection. {}",
+                self.directive.name,
+                self.coordinate,
+                error.to_string(),
+            ),
+            locations: self
+                .directive
+                .line_column_range(&self.schema.sources)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn expected_integer_selection_error(&self, slicing_argument: &str, value: &str) -> Message {
+        // TODO: Different code?
+        Message {
+            code: Code::InvalidJsonSelection,
+            message: format!(
+                "@{}({}:) on {} selects invalid slicing arguments. Selection {} selects {}, but Int is required",
+                self.directive.name, LIST_SIZE_SLICING_ARGUMENTS_NAME, self.coordinate, slicing_argument, value
+            ),
+            locations: self.directive
+                .line_column_range(&self.schema.sources)
+                .into_iter()
+                .collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use apollo_compiler::Schema;
@@ -381,7 +443,7 @@ mod test {
             validation_errors,
             vec![
                 "@listSize(slicingArguments:) on Query.getStrings selects invalid slicing arguments. Property .doesntExist not found in object",
-                "@listSize(slicingArguments:) on Query.getStrings selects invalid slicing arguments. Selection paging.opaqueCursor selects \"String\", but Int is required",
+                "@listSize(slicingArguments:) on Query.getStrings selects invalid slicing arguments. Selection paging.opaqueCursor selects String, but Int is required",
                 "@listSize(slicingArguments:) on Query.getStrings is not a valid JSONSelection. Parsing Error: Error { input: \"}bad selection\", code: IsNot }"
             ]
         )
